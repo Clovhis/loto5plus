@@ -16,8 +16,15 @@ class Loto5PlusApp:
         self.root.title("Loto 5 Plus Checker")
         self.root.resizable(False, False)
         # Slightly bigger default font and window
+        # Set larger default fonts safely (Windows: quote family with space)
         try:
-            self.root.option_add("*Font", "Segoe UI 11")
+            import tkinter.font as tkfont
+            for fname in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
+                try:
+                    f = tkfont.nametofont(fname)
+                    f.configure(family="Segoe UI", size=11)
+                except Exception:
+                    pass
         except Exception:
             pass
         self.root.minsize(560, 360)
