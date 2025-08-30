@@ -1,0 +1,46 @@
+name: Build Release (Windows)
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --noconsole --onefile --name Loto5PlusChecker src/app.py
+
+      - name: Compress artifact
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/Loto5PlusChecker.exe" -DestinationPath "Loto5PlusChecker_Windows.zip" -Force
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: Loto5PlusChecker-${{ github.run_number }}
+          name: Loto5PlusChecker Windows ${{ github.run_number }}
+          draft: false
+          prerelease: false
+          files: |
+            Loto5PlusChecker_Windows.zip
