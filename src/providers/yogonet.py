@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List
 
 import requests
 from bs4 import BeautifulSoup
 
-from .base import Provider, parse_first_five_numbers_0_36_from_text
+from .base import (
+    Provider,
+    ProviderResult,
+    parse_first_five_numbers_0_36_from_text,
+    try_parse_draw_metadata,
+)
 
 
 class YogonetProvider(Provider):
@@ -15,7 +20,7 @@ class YogonetProvider(Provider):
         "buenos-aires/loto-5-plus/"
     )
 
-    def fetch(self) -> Tuple[List[int], str]:
+    def fetch(self) -> ProviderResult:
         headers = {
             "User-Agent": "Loto5PlusChecker/1.0 (+https://example.local)",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -44,5 +49,14 @@ class YogonetProvider(Provider):
             text = soup.get_text(" ", strip=True)
             candidates = parse_first_five_numbers_0_36_from_text(text)
 
-        return candidates, self.name
+        # Metadata
+        page_text = soup.get_text(" ", strip=True)
+        draw_num, last_dt, next_dt = try_parse_draw_metadata(page_text)
 
+        return ProviderResult(
+            numbers=candidates,
+            label=self.name,
+            last_draw_number=draw_num,
+            last_draw_datetime=last_dt,
+            next_draw_datetime=next_dt,
+        )

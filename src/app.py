@@ -15,9 +15,18 @@ class Loto5PlusApp:
         self.root = root
         self.root.title("Loto 5 Plus Checker")
         self.root.resizable(False, False)
+        # Slightly bigger default font and window
+        try:
+            self.root.option_add("*Font", "Segoe UI 11")
+        except Exception:
+            pass
+        self.root.minsize(560, 360)
 
         self.winning_numbers: Optional[List[int]] = None
         self.source_label: str = ""
+        self.last_draw_number: Optional[int] = None
+        self.last_draw_datetime: Optional[datetime] = None
+        self.next_draw_datetime: Optional[datetime] = None
 
         # UI Layout
         container = tk.Frame(root, padx=12, pady=12)
@@ -51,6 +60,18 @@ class Loto5PlusApp:
         )
         self.btn_copy_winners.pack(side=tk.RIGHT)
 
+        meta_row = tk.Frame(winners_frame)
+        meta_row.pack(fill=tk.X, padx=8, pady=(0, 0))
+        self.draw_num_var = tk.StringVar(value="Sorteo N°: —")
+        tk.Label(meta_row, textvariable=self.draw_num_var).pack(side=tk.LEFT)
+
+        times_row = tk.Frame(winners_frame)
+        times_row.pack(fill=tk.X, padx=8, pady=(0, 6))
+        self.last_draw_var = tk.StringVar(value="Último sorteo: —")
+        self.next_draw_var = tk.StringVar(value="Próximo sorteo: —")
+        tk.Label(times_row, textvariable=self.last_draw_var).pack(side=tk.LEFT)
+        tk.Label(times_row, textvariable=self.next_draw_var).pack(side=tk.RIGHT)
+
         self.winner_labels: List[tk.Label] = []
         winners_numbers_row = tk.Frame(winners_frame)
         winners_numbers_row.pack(padx=8, pady=6)
@@ -61,7 +82,7 @@ class Loto5PlusApp:
                 width=4,
                 relief=tk.GROOVE,
                 borderwidth=1,
-                font=("Segoe UI", 12, "bold"),
+                font=("Segoe UI", 14, "bold"),
                 padx=6,
                 pady=4,
             )
@@ -76,7 +97,7 @@ class Loto5PlusApp:
         entry_row.pack(fill=tk.X, padx=8, pady=6)
         tk.Label(entry_row, text="Números (0–36, separados por coma):").pack(side=tk.LEFT)
         self.entry_var = tk.StringVar()
-        self.entry = tk.Entry(entry_row, textvariable=self.entry_var, width=32)
+        self.entry = tk.Entry(entry_row, textvariable=self.entry_var, width=40, font=("Segoe UI", 11))
         self.entry.pack(side=tk.LEFT, padx=(6, 6))
         self.entry.bind("<Return>", lambda _e: self.verify_input())
         self.btn_verify = tk.Button(entry_row, text="Verificar", command=self.verify_input)
@@ -107,7 +128,7 @@ class Loto5PlusApp:
                 width=4,
                 relief=tk.GROOVE,
                 borderwidth=1,
-                font=("Segoe UI", 12, "bold"),
+                font=("Segoe UI", 14, "bold"),
                 padx=6,
                 pady=4,
             )
@@ -136,24 +157,25 @@ class Loto5PlusApp:
             last_error: Optional[str] = None
             for p in providers:
                 try:
-                    numbers, label = p.fetch()
-                    self.root.after(0, self._on_results_ready, numbers, label, None)
+                    result = p.fetch()
+                    self.root.after(0, self._on_results_ready, result, None)
                     return
                 except Exception as e:  # noqa: BLE001
                     last_error = f"{type(e).__name__}: {e}"
                     continue
-            self.root.after(0, self._on_results_ready, None, "", last_error)
+            self.root.after(0, self._on_results_ready, None, last_error)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_results_ready(
-        self, numbers: Optional[List[int]], label: str, error: Optional[str]
-    ) -> None:
+    def _on_results_ready(self, result, error: Optional[str]) -> None:
         # Back on UI thread
         self.btn_update.config(state=tk.NORMAL, text="Actualizar resultados")
-        if numbers and not error:
-            self.winning_numbers = numbers
-            self.source_label = label
+        if result is not None and not error:
+            self.winning_numbers = result.numbers
+            self.source_label = result.label
+            self.last_draw_number = result.last_draw_number
+            self.last_draw_datetime = result.last_draw_datetime
+            self.next_draw_datetime = result.next_draw_datetime
             self.render_winners()
             self.status_var.set(
                 f"Actualizado {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
@@ -177,6 +199,15 @@ class Loto5PlusApp:
             lbl.config(text=str(n))
         self.btn_copy_winners.config(state=tk.NORMAL)
         self.btn_use_winners.config(state=tk.NORMAL)
+
+        # Draw metadata rendering
+        self.draw_num_var.set(
+            f"Sorteo N°: {self.last_draw_number}" if self.last_draw_number else "Sorteo N°: —"
+        )
+        def fmt_dt(dt: Optional[datetime]) -> str:
+            return dt.strftime("%d/%m/%Y %H:%M") if dt else "—"
+        self.last_draw_var.set(f"Último sorteo: {fmt_dt(self.last_draw_datetime)}")
+        self.next_draw_var.set(f"Próximo sorteo: {fmt_dt(self.next_draw_datetime)}")
 
     def verify_input(self) -> None:
         try:

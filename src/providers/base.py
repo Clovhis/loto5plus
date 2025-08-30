@@ -1,7 +1,18 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Tuple
+from dataclasses import dataclass
+from datetime import datetime
+from typing import List, Optional
+
+
+@dataclass
+class ProviderResult:
+    numbers: List[int]
+    label: str
+    last_draw_number: Optional[int] = None
+    last_draw_datetime: Optional[datetime] = None
+    next_draw_datetime: Optional[datetime] = None
 
 
 class Provider(ABC):
@@ -15,8 +26,8 @@ class Provider(ABC):
     name: str = ""
 
     @abstractmethod
-    def fetch(self) -> Tuple[List[int], str]:
-        """Fetch latest results or raise an exception on failure."""
+    def fetch(self) -> ProviderResult:
+        """Fetch latest results and metadata or raise an exception on failure."""
         raise NotImplementedError
 
 
@@ -43,3 +54,48 @@ def parse_first_five_numbers_0_36_from_text(text: str) -> List[int]:
         raise ValueError("No se pudieron extraer 5 números válidos (0–36)")
     return result
 
+
+def try_parse_draw_metadata(text: str) -> tuple[Optional[int], Optional[datetime], Optional[datetime]]:
+    """Best-effort parse of draw number, last draw datetime and next draw datetime from text.
+
+    Returns (last_draw_number, last_draw_datetime, next_draw_datetime). Any value can be None.
+    """
+    import re
+    from datetime import datetime
+
+    # Draw number
+    num = None
+    m = re.search(r"Sorteo\s*(?:N°|Nº|No\.?|Nro\.?|#)?\s*(\d{3,6})", text, re.IGNORECASE)
+    if m:
+        try:
+            num = int(m.group(1))
+        except Exception:
+            num = None
+
+    # Helper to parse dd/mm/yyyy and hh:mm near markers
+    def find_dt(around: str) -> Optional[datetime]:
+        idx = text.lower().find(around.lower())
+        span = text if idx == -1 else text[max(0, idx - 50) : idx + 120]
+        d = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", span)
+        t = re.search(r"(\d{1,2}:\d{2})", span)
+        if d and t:
+            ds = d.group(1)
+            ts = t.group(1)
+            for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%y %H:%M"):
+                try:
+                    return datetime.strptime(f"{ds} {ts}", fmt)
+                except Exception:
+                    continue
+        # Sometimes only time appears; attach today
+        if t and not d:
+            try:
+                today = datetime.today().strftime("%d/%m/%Y")
+                return datetime.strptime(f"{today} {t.group(1)}", "%d/%m/%Y %H:%M")
+            except Exception:
+                pass
+        return None
+
+    last_dt = find_dt("Último sorteo") or find_dt("Resultado") or None
+    next_dt = find_dt("Próximo sorteo") or find_dt("Proximo sorteo") or None
+
+    return num, last_dt, next_dt
