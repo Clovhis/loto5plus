@@ -25,6 +25,12 @@ class LaciudadProvider(Provider):
 
         # Try to locate official XML endpoint(s) linked from the page
         xml_urls: list[str] = []
+        # Highest priority: explicit env var override(s)
+        import os
+        for key in ("LACIUDAD_XML_URL", "LOTO5_XML_URL", "L5P_XML_URL"):
+            v = os.environ.get(key)
+            if v:
+                xml_urls.append(v)
         for tag in soup.find_all(["a", "link" ]):
             href = tag.get("href") or tag.get("src")
             if not href:
@@ -39,6 +45,11 @@ class LaciudadProvider(Provider):
             urljoin(self.URL, "data/loto5.xml"),
             urljoin(self.URL, "xml/loto5.xml"),
             urljoin(self.URL, "xml/datos.xml"),
+            urljoin(self.URL, "DatosSorteo.xml"),
+            urljoin(self.URL, "data/DatosSorteo.xml"),
+            urljoin(self.URL, "xml/DatosSorteo.xml"),
+            urljoin(self.URL, "api/DatosSorteo.xml"),
+            urljoin(self.URL, "loto5/DatosSorteo.xml"),
         ]
 
         numbers: List[int] = []
@@ -50,9 +61,10 @@ class LaciudadProvider(Provider):
         for xurl in xml_urls:
             try:
                 xr = requests.get(xurl, headers=headers, timeout=6)
-                if xr.status_code != 200 or not xr.text.strip().startswith("<"):
+                content = xr.text.lstrip("\ufeff\n\r\t ")
+                if xr.status_code != 200 or (not content.startswith("<") and "xml" not in (xr.headers.get("Content-Type", "").lower())):
                     continue
-                xsoup = BeautifulSoup(xr.text, "xml")
+                xsoup = BeautifulSoup(content, "xml")
                 # Required tags are present?
                 if xsoup.find("DatosSorteo"):
                     # Numbers
