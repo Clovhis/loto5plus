@@ -32,7 +32,7 @@ class TujugadaProvider(Provider):
         last_exc: Exception | None = None
         for url in self.CANDIDATE_URLS:
             try:
-                resp = requests.get(url, headers=headers, timeout=15)
+                resp = requests.get(url, headers=headers, timeout=6)
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -54,4 +54,3 @@ class TujugadaProvider(Provider):
 
         # If none of the candidates worked, raise last error
         raise (last_exc or RuntimeError("No se pudo obtener TuJugada"))
-

@@ -160,7 +160,8 @@ class Loto5PlusApp:
         self.status_var.set("Descargando último resultado…")
 
         def worker() -> None:
-            # Prefer official/local sources, but enrich missing metadata from others
+            # Prefer official/local sources; return first success fast.
+            # Enrichment of missing metadata happens in a separate short task.
             from providers.tujugada import TujugadaProvider
             providers = [
                 SaltaProvider(),
@@ -168,36 +169,54 @@ class Loto5PlusApp:
                 YogonetProvider(),
             ]
             last_error: Optional[str] = None
-            accumulated = None
-            for p in providers:
+            for i, p in enumerate(providers):
                 try:
-                    r = p.fetch()
-                    if accumulated is None:
-                        accumulated = r
-                    else:
-                        # Fill any missing metadata from this provider
-                        if accumulated.last_draw_number is None and r.last_draw_number is not None:
-                            accumulated.last_draw_number = r.last_draw_number
-                        if accumulated.last_draw_datetime is None and r.last_draw_datetime is not None:
-                            accumulated.last_draw_datetime = r.last_draw_datetime
-                        if accumulated.next_draw_datetime is None and r.next_draw_datetime is not None:
-                            accumulated.next_draw_datetime = r.next_draw_datetime
-                    # Stop early if all metadata is present
+                    result = p.fetch()
+                    # Immediately show results
+                    self.root.after(0, self._on_results_ready, result, None)
+
+                    # If metadata is incomplete, try to enrich quickly without blocking UI
+                    def enrich_metadata(index_used: int, base_result) -> None:
+                        for j, q in enumerate(providers):
+                            if j == index_used:
+                                continue
+                            try:
+                                r2 = q.fetch()
+                                changed = False
+                                if base_result.last_draw_number is None and r2.last_draw_number is not None:
+                                    base_result.last_draw_number = r2.last_draw_number
+                                    changed = True
+                                if base_result.last_draw_datetime is None and r2.last_draw_datetime is not None:
+                                    base_result.last_draw_datetime = r2.last_draw_datetime
+                                    changed = True
+                                if base_result.next_draw_datetime is None and r2.next_draw_datetime is not None:
+                                    base_result.next_draw_datetime = r2.next_draw_datetime
+                                    changed = True
+                                if changed:
+                                    # Update only metadata on UI thread
+                                    def apply_update() -> None:
+                                        self.last_draw_number = base_result.last_draw_number
+                                        self.last_draw_datetime = base_result.last_draw_datetime
+                                        self.next_draw_datetime = base_result.next_draw_datetime
+                                        self.render_winners()
+                                    self.root.after(0, apply_update)
+                                    return
+                            except Exception:
+                                continue
+
                     if (
-                        accumulated is not None
-                        and accumulated.last_draw_number is not None
-                        and accumulated.last_draw_datetime is not None
-                        and accumulated.next_draw_datetime is not None
+                        result.last_draw_number is None
+                        or result.last_draw_datetime is None
+                        or result.next_draw_datetime is None
                     ):
-                        break
+                        threading.Thread(
+                            target=enrich_metadata, args=(i, result), daemon=True
+                        ).start()
+                    return
                 except Exception as e:  # noqa: BLE001
                     last_error = f"{type(e).__name__}: {e}"
                     continue
-
-            if accumulated is not None:
-                self.root.after(0, self._on_results_ready, accumulated, None)
-            else:
-                self.root.after(0, self._on_results_ready, None, last_error)
+            self.root.after(0, self._on_results_ready, None, last_error)
 
         threading.Thread(target=worker, daemon=True).start()
 
