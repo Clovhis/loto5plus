@@ -5,6 +5,7 @@ from typing import List, Optional
 import re
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin
 
 from .base import Provider, ProviderResult
 
@@ -21,6 +22,96 @@ class LaciudadProvider(Provider):
         resp = requests.get(self.URL, headers=headers, timeout=6)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Try to locate official XML endpoint(s) linked from the page
+        xml_urls: list[str] = []
+        for tag in soup.find_all(["a", "link" ]):
+            href = tag.get("href") or tag.get("src")
+            if not href:
+                continue
+            if ".xml" in href.lower():
+                xml_urls.append(urljoin(self.URL, href))
+
+        # Common fallbacks if not linked explicitly
+        xml_urls += [
+            urljoin(self.URL, "datos.xml"),
+            urljoin(self.URL, "loto5.xml"),
+            urljoin(self.URL, "data/loto5.xml"),
+            urljoin(self.URL, "xml/loto5.xml"),
+            urljoin(self.URL, "xml/datos.xml"),
+        ]
+
+        numbers: List[int] = []
+        draw_num: Optional[int] = None
+        last_dt = None
+        next_dt = None
+
+        # Attempt to fetch and parse XML
+        for xurl in xml_urls:
+            try:
+                xr = requests.get(xurl, headers=headers, timeout=6)
+                if xr.status_code != 200 or not xr.text.strip().startswith("<"):
+                    continue
+                xsoup = BeautifulSoup(xr.text, "xml")
+                # Required tags are present?
+                if xsoup.find("DatosSorteo"):
+                    # Numbers
+                    nums = []
+                    for tag in ["N01", "N02", "N03", "N04", "N05"]:
+                        el = xsoup.find(tag)
+                        if not el or not el.text.strip():
+                            nums = []
+                            break
+                        try:
+                            n = int(el.text.strip())
+                        except Exception:
+                            nums = []
+                            break
+                        if 0 <= n <= 36:
+                            nums.append(n)
+                        else:
+                            nums = []
+                            break
+                    if len(nums) == 5:
+                        numbers = nums
+                    # Draw number
+                    eln = xsoup.find("Sorteo")
+                    if eln and eln.text.strip().isdigit():
+                        try:
+                            draw_num = int(eln.text.strip())
+                        except Exception:
+                            draw_num = None
+                    # Dates
+                    from datetime import datetime
+                    f = xsoup.find("FechaSorteo")
+                    h = xsoup.find("HoraSorteo")
+                    if f and f.text.strip():
+                        date_str = f.text.strip().replace("/", "-")
+                        time_str = (h.text.strip() if h and h.text else "")
+                        dt_str = f"{date_str} {time_str}".strip()
+                        for fmt in ("%d-%m-%Y %H:%M", "%d-%m-%Y", "%d/%m/%Y %H:%M", "%d/%m/%Y"):
+                            try:
+                                last_dt = datetime.strptime(dt_str, fmt)
+                                break
+                            except Exception:
+                                continue
+                    fn = xsoup.find("FechaProximoSorteo")
+                    hn = xsoup.find("HoraProximoSorteo")
+                    if fn and fn.text.strip():
+                        date_str = fn.text.strip().replace("/", "-")
+                        time_str = (hn.text.strip() if hn and hn.text else "")
+                        dt_str = f"{date_str} {time_str}".strip()
+                        for fmt in ("%d-%m-%Y %H:%M", "%d-%m-%Y", "%d/%m/%Y %H:%M", "%d/%m/%Y"):
+                            try:
+                                next_dt = datetime.strptime(dt_str, fmt)
+                                break
+                            except Exception:
+                                continue
+                # Stop if we found numbers in XML
+                if numbers:
+                    break
+            except Exception:
+                continue
 
         # 1) Extract the five drawn numbers (robust clustering within same container)
         from collections import defaultdict
@@ -49,7 +140,6 @@ class LaciudadProvider(Provider):
                 score += 1
             candidates.append({"idx": idx, "n": n, "el": el, "root": root, "score": score})
 
-        numbers: List[int] = []
         best_key = None
         if candidates:
             by_root: dict[int, list[Node]] = defaultdict(list)
@@ -100,7 +190,6 @@ class LaciudadProvider(Provider):
 
         # 2) Draw number and date from explicit label "Fecha: dd/mm/yyyy - Sorteo: nnnn"
         page_text = soup.get_text("\n", strip=True)
-        draw_num: Optional[int] = None
         last_date_text: Optional[str] = None
         m = re.search(r"Fecha:\s*(\d{1,2}/\d{1,2}/\d{2,4})\s*-\s*Sorteo:\s*(\d{2,6})", page_text, re.IGNORECASE)
         if m:
@@ -122,8 +211,7 @@ class LaciudadProvider(Provider):
                 last_date_text = d2.group(1)
 
         from datetime import datetime
-        last_dt = None
-        if last_date_text:
+        if not last_dt and last_date_text:
             for fmt in ("%d/%m/%Y", "%d/%m/%y"):
                 try:
                     last_dt = datetime.strptime(last_date_text, fmt)
@@ -147,7 +235,6 @@ class LaciudadProvider(Provider):
             label=self.name,
             last_draw_number=draw_num,
             last_draw_datetime=last_dt,
-            next_draw_datetime=None,
+            next_draw_datetime=next_dt,
             next_jackpot_text=jackpot_text,
         )
-
