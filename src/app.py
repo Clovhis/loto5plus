@@ -160,7 +160,7 @@ class Loto5PlusApp:
         self.status_var.set("Descargando último resultado…")
 
         def worker() -> None:
-            # Prefer official/local sources first
+            # Prefer official/local sources, but enrich missing metadata from others
             from providers.tujugada import TujugadaProvider
             providers = [
                 SaltaProvider(),
@@ -168,15 +168,36 @@ class Loto5PlusApp:
                 YogonetProvider(),
             ]
             last_error: Optional[str] = None
+            accumulated = None
             for p in providers:
                 try:
-                    result = p.fetch()
-                    self.root.after(0, self._on_results_ready, result, None)
-                    return
+                    r = p.fetch()
+                    if accumulated is None:
+                        accumulated = r
+                    else:
+                        # Fill any missing metadata from this provider
+                        if accumulated.last_draw_number is None and r.last_draw_number is not None:
+                            accumulated.last_draw_number = r.last_draw_number
+                        if accumulated.last_draw_datetime is None and r.last_draw_datetime is not None:
+                            accumulated.last_draw_datetime = r.last_draw_datetime
+                        if accumulated.next_draw_datetime is None and r.next_draw_datetime is not None:
+                            accumulated.next_draw_datetime = r.next_draw_datetime
+                    # Stop early if all metadata is present
+                    if (
+                        accumulated is not None
+                        and accumulated.last_draw_number is not None
+                        and accumulated.last_draw_datetime is not None
+                        and accumulated.next_draw_datetime is not None
+                    ):
+                        break
                 except Exception as e:  # noqa: BLE001
                     last_error = f"{type(e).__name__}: {e}"
                     continue
-            self.root.after(0, self._on_results_ready, None, last_error)
+
+            if accumulated is not None:
+                self.root.after(0, self._on_results_ready, accumulated, None)
+            else:
+                self.root.after(0, self._on_results_ready, None, last_error)
 
         threading.Thread(target=worker, daemon=True).start()
 

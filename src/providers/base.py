@@ -63,25 +63,38 @@ def try_parse_draw_metadata(text: str) -> tuple[Optional[int], Optional[datetime
     import re
     from datetime import datetime
 
-    # Draw number
-    num = None
-    m = re.search(r"Sorteo\s*(?:N°|Nº|No\.?|Nro\.?|#)?\s*(\d{3,6})", text, re.IGNORECASE)
+    # Draw number e.g. "Sorteo N° 1234", "Sorteo Nro 1234", "Sorteo No 1234", "Sorteo #1234"
+    num: Optional[int] = None
+    m = re.search(r"Sorteo\s*(?:N[°ºo]?|Nro\.?|No\.?|#)?\s*(\d{2,6})", text, re.IGNORECASE)
     if m:
         try:
             num = int(m.group(1))
         except Exception:
             num = None
 
-    # Helper to parse dd/mm/yyyy and hh:mm near markers
-    def find_dt(around: str) -> Optional[datetime]:
-        idx = text.lower().find(around.lower())
-        span = text if idx == -1 else text[max(0, idx - 50) : idx + 120]
-        d = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", span)
-        t = re.search(r"(\d{1,2}:\d{2})", span)
+    # Helper to parse dd/mm/yyyy (or dd-mm-yyyy) and hh:mm (or hh.mm) near markers
+    def find_dt_terms(around_terms: list[str]) -> Optional[datetime]:
+        # Build flexible pattern for terms with/without accents
+        def flex(term: str) -> str:
+            return (
+                term.replace("ó", "[oó]")
+                .replace("ú", "[uú]")
+                .replace("í", "[ií]")
+                .replace("é", "[eé]")
+                .replace("á", "[aá]")
+            )
+
+        pattern = "|".join(rf"{flex(t)}" for t in around_terms)
+        m0 = re.search(pattern, text, re.IGNORECASE)
+        idx = m0.start() if m0 else -1
+        span = text if idx == -1 else text[max(0, idx - 80) : idx + 200]
+
+        d = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", span)
+        t = re.search(r"(\d{1,2}[:.]\d{2})\s*(?:hs|hs\.|h|hrs|hrs\.)?", span, re.IGNORECASE)
         if d and t:
             ds = d.group(1)
-            ts = t.group(1)
-            for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%y %H:%M"):
+            ts = t.group(1).replace(".", ":")
+            for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%y %H:%M", "%d-%m-%Y %H:%M", "%d-%m-%y %H:%M"):
                 try:
                     return datetime.strptime(f"{ds} {ts}", fmt)
                 except Exception:
@@ -89,13 +102,15 @@ def try_parse_draw_metadata(text: str) -> tuple[Optional[int], Optional[datetime
         # Sometimes only time appears; attach today
         if t and not d:
             try:
+                ts = t.group(1).replace(".", ":")
                 today = datetime.today().strftime("%d/%m/%Y")
-                return datetime.strptime(f"{today} {t.group(1)}", "%d/%m/%Y %H:%M")
+                return datetime.strptime(f"{today} {ts}", "%d/%m/%Y %H:%M")
             except Exception:
                 pass
         return None
 
-    last_dt = find_dt("Último sorteo") or find_dt("Resultado") or None
-    next_dt = find_dt("Próximo sorteo") or find_dt("Proximo sorteo") or None
+    last_dt = find_dt_terms(["último sorteo", "ultimo sorteo", "resultado", "resultado del sorteo"]) or None
+    next_dt = find_dt_terms(["próximo sorteo", "proximo sorteo", "siguiente sorteo"]) or None
 
     return num, last_dt, next_dt
+
