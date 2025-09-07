@@ -160,7 +160,13 @@ class Loto5PlusApp:
         self.status_var.set("Descargando último resultado…")
 
         def worker() -> None:
-            providers = [YogonetProvider(), SaltaProvider()]
+            # Prefer official/local sources first
+            from providers.tujugada import TujugadaProvider
+            providers = [
+                SaltaProvider(),
+                TujugadaProvider(),
+                YogonetProvider(),
+            ]
             last_error: Optional[str] = None
             for p in providers:
                 try:
@@ -178,7 +184,8 @@ class Loto5PlusApp:
         # Back on UI thread
         self.btn_update.config(state=tk.NORMAL, text="Actualizar resultados")
         if result is not None and not error:
-            self.winning_numbers = result.numbers
+            # Always sort ascending for display and clipboard
+            self.winning_numbers = sorted(result.numbers)
             self.source_label = result.label
             self.last_draw_number = result.last_draw_number
             self.last_draw_datetime = result.last_draw_datetime
