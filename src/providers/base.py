@@ -13,6 +13,8 @@ class ProviderResult:
     last_draw_number: Optional[int] = None
     last_draw_datetime: Optional[datetime] = None
     next_draw_datetime: Optional[datetime] = None
+    # Additional metadata for official site
+    next_jackpot_text: Optional[str] = None
 
 
 class Provider(ABC):

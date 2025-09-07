@@ -6,8 +6,7 @@ import tkinter as tk
 from tkinter import messagebox
 from typing import List, Optional
 
-from providers.yogonet import YogonetProvider
-from providers.salta import SaltaProvider
+from providers.laciudad import LaciudadProvider
 
 
 class Loto5PlusApp:
@@ -34,6 +33,7 @@ class Loto5PlusApp:
         self.last_draw_number: Optional[int] = None
         self.last_draw_datetime: Optional[datetime] = None
         self.next_draw_datetime: Optional[datetime] = None
+        self.next_jackpot_text: Optional[str] = None
 
         # UI Layout
         container = tk.Frame(root, padx=12, pady=12)
@@ -160,12 +160,9 @@ class Loto5PlusApp:
         self.status_var.set("Descargando último resultado…")
 
         def worker() -> None:
-            # Prefer official/local sources; return first success fast.
-            # Enrichment of missing metadata happens in a separate short task.
-            from providers.tujugada import TujugadaProvider
+            # Sitio oficial único
             providers = [
-                YogonetProvider(),
-                TujugadaProvider(),
+                LaciudadProvider(),
             ]
             last_error: Optional[str] = None
             for i, p in enumerate(providers):
@@ -174,43 +171,6 @@ class Loto5PlusApp:
                     # Immediately show results
                     self.root.after(0, self._on_results_ready, result, None)
 
-                    # If metadata is incomplete, try to enrich quickly without blocking UI
-                    def enrich_metadata(index_used: int, base_result) -> None:
-                        for j, q in enumerate(providers):
-                            if j == index_used:
-                                continue
-                            try:
-                                r2 = q.fetch()
-                                changed = False
-                                if base_result.last_draw_number is None and r2.last_draw_number is not None:
-                                    base_result.last_draw_number = r2.last_draw_number
-                                    changed = True
-                                if base_result.last_draw_datetime is None and r2.last_draw_datetime is not None:
-                                    base_result.last_draw_datetime = r2.last_draw_datetime
-                                    changed = True
-                                if base_result.next_draw_datetime is None and r2.next_draw_datetime is not None:
-                                    base_result.next_draw_datetime = r2.next_draw_datetime
-                                    changed = True
-                                if changed:
-                                    # Update only metadata on UI thread
-                                    def apply_update() -> None:
-                                        self.last_draw_number = base_result.last_draw_number
-                                        self.last_draw_datetime = base_result.last_draw_datetime
-                                        self.next_draw_datetime = base_result.next_draw_datetime
-                                        self.render_winners()
-                                    self.root.after(0, apply_update)
-                                    return
-                            except Exception:
-                                continue
-
-                    if (
-                        result.last_draw_number is None
-                        or result.last_draw_datetime is None
-                        or result.next_draw_datetime is None
-                    ):
-                        threading.Thread(
-                            target=enrich_metadata, args=(i, result), daemon=True
-                        ).start()
                     return
                 except Exception as e:  # noqa: BLE001
                     last_error = f"{type(e).__name__}: {e}"
@@ -229,7 +189,12 @@ class Loto5PlusApp:
             self.last_draw_number = result.last_draw_number
             self.last_draw_datetime = result.last_draw_datetime
             self.next_draw_datetime = result.next_draw_datetime
-            self.render_winners()
+            # Extra metadata (jackpot)
+            try:
+                self.next_jackpot_text = result.next_jackpot_text  # type: ignore[attr-defined]
+            except Exception:
+                self.next_jackpot_text = None
+            self._render_winners_official()
             self.status_var.set(
                 f"Actualizado {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
             )
@@ -317,6 +282,33 @@ class Loto5PlusApp:
             self.root.clipboard_clear()
             self.root.clipboard_append(text)
             self.status_var.set("Ganadores copiados al portapapeles")
+
+    # Official rendering matching exact format
+    def _render_winners_official(self) -> None:
+        if not self.winning_numbers:
+            try:
+                self.winners_source_var.set("Fuente: —")
+            except Exception:
+                pass
+            for lbl in self.winner_labels:
+                lbl.config(text="—")
+            return
+        self.winners_source_var.set(f"Fuente: {self.source_label}")
+        for lbl, n in zip(self.winner_labels, self.winning_numbers):
+            lbl.config(text=str(n))
+        self.btn_copy_winners.config(state=tk.NORMAL)
+        self.btn_use_winners.config(state=tk.NORMAL)
+
+        def fmt_date(dt: Optional[datetime]) -> str:
+            return dt.strftime("%d/%m/%Y") if dt else "—"
+        date_txt = fmt_date(self.last_draw_datetime)
+        sorteo_txt = str(self.last_draw_number) if self.last_draw_number else "—"
+        self.draw_num_var.set(f"Fecha: {date_txt} - Sorteo: {sorteo_txt}")
+        self.last_draw_var.set("POZO ESTIMADO PRÓXIMO SORTEO")
+        try:
+            self.next_draw_var.set(self.next_jackpot_text or "—")
+        except Exception:
+            self.next_draw_var.set("—")
 
     @staticmethod
     def _parse_user_numbers(text: str) -> List[int]:
