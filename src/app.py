@@ -164,8 +164,8 @@ class Loto5PlusApp:
             # Enrichment of missing metadata happens in a separate short task.
             from providers.tujugada import TujugadaProvider
             providers = [
-                TujugadaProvider(),
                 YogonetProvider(),
+                TujugadaProvider(),
             ]
             last_error: Optional[str] = None
             for i, p in enumerate(providers):

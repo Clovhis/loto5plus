@@ -72,20 +72,20 @@ def try_parse_draw_metadata(text: str) -> tuple[Optional[int], Optional[datetime
 
     # Draw number: support multiple phrasings
     num: Optional[int] = None
-    num_patterns = [
-        r"\bsorteo\b\s*(?:n[°ºo]?\s*|nro\.?\s*|no\.?\s*|#\s*)?(\d{2,6})",
-        r"(?:n[°º]?\s*de\s*sorteo|nro\.?\s*de\s*sorteo|numero\s*de\s*sorteo)\s*[:#-]?\s*(\d{2,6})",
-        r"\bn[°º]?\s*[:#-]?\s*(\d{2,6})",
-        r"\bsorteo\s*[:#-]?\s*(\d{2,6})",
-    ]
-    for pat in num_patterns:
-        m = re.search(pat, text_norm, re.IGNORECASE)
-        if m:
-            try:
+    try:
+        num_patterns = [
+            r"\bsorteo\b\s*(?:n[°ºo]?\s*|nro\.?\s*|no\.?\s*|#\s*)?(\d{2,6})",
+            r"(?:n[°º]?\s*de\s*sorteo|nro\.?\s*de\s*sorteo|numero\s*de\s*sorteo)\s*[:#-]?\s*(\d{2,6})",
+            r"\bn[°º]?\s*[:#-]?\s*(\d{2,6})",
+            r"\bsorteo\s*[:#-]?\s*(\d{2,6})",
+        ]
+        for pat in num_patterns:
+            m = re.search(pat, text_norm, re.IGNORECASE)
+            if m:
                 num = int(m.group(1))
                 break
-            except Exception:
-                continue
+    except Exception:
+        num = None
 
     # Helper: find datetime near any of the include terms, avoiding exclude terms when possible
     def find_dt_terms(terms_include: list[str], terms_exclude: list[str] | None = None) -> Optional[datetime]:
@@ -154,14 +154,39 @@ def try_parse_draw_metadata(text: str) -> tuple[Optional[int], Optional[datetime
         candidates.sort(key=lambda x: x[0])
         return candidates[0][1]
 
+    # Simple fallback: mimic earlier behavior (scan around single anchor term)
+    def find_dt_simple(anchor: str) -> Optional[datetime]:
+        idx = text_norm.find(normalize(anchor))
+        if idx == -1:
+            return None
+        span_norm = text_norm[max(0, idx - 80) : idx + 180]
+        d = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", span_norm)
+        t = re.search(r"(\d{1,2}):(\d{2})", span_norm)
+        if d and t:
+            ds = d.group(1)
+            ts = f"{t.group(1)}:{t.group(2)}"
+            for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%y %H:%M", "%d-%m-%Y %H:%M", "%d-%m-%y %H:%M"):
+                try:
+                    return datetime.strptime(f"{ds} {ts}", fmt)
+                except Exception:
+                    continue
+        if t and not d:
+            try:
+                today = datetime.today().strftime("%d/%m/%Y")
+                ts = f"{t.group(1)}:{t.group(2)}"
+                return datetime.strptime(f"{today} {ts}", "%d/%m/%Y %H:%M")
+            except Exception:
+                return None
+        return None
+
     last_dt = (
         find_dt_terms(["último sorteo", "ultimo sorteo"])  # prefer explicit marker
         or find_dt_terms(["resultado", "resultado del sorteo"], terms_exclude=["próximo", "proximo", "siguiente"])  # avoid next markers
-        or find_dt_terms(["sorteo"], terms_exclude=["próximo", "proximo", "siguiente"])  # generic fallback near "sorteo"
-    )
+    ) or find_dt_simple("último sorteo") or find_dt_simple("resultado")
+
     next_dt = (
         find_dt_terms(["próximo sorteo", "proximo sorteo", "siguiente sorteo"])  # next markers
         or find_dt_terms(["próximo", "proximo", "siguiente", "cierra"])  # generic next/cutoff
-    )
+    ) or find_dt_simple("próximo sorteo") or find_dt_simple("proximo sorteo")
 
     return num, last_dt, next_dt
