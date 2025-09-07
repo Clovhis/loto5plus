@@ -72,23 +72,15 @@ def try_parse_draw_metadata(text: str) -> tuple[Optional[int], Optional[datetime
         except Exception:
             num = None
 
-    # Helper to parse dd/mm/yyyy (or dd-mm-yyyy) and hh:mm (or hh.mm) near markers
+    # Helper to parse near markers (Último/Próximo sorteo, etc.)
     def find_dt_terms(around_terms: list[str]) -> Optional[datetime]:
-        # Build flexible pattern for terms with/without accents
-        def flex(term: str) -> str:
-            return (
-                term.replace("ó", "[oó]")
-                .replace("ú", "[uú]")
-                .replace("í", "[ií]")
-                .replace("é", "[eé]")
-                .replace("á", "[aá]")
-            )
-
-        pattern = "|".join(rf"{flex(t)}" for t in around_terms)
+        # Locate the first occurrence of any term and scan nearby text
+        pattern = "|".join(rf"{t}" for t in around_terms)
         m0 = re.search(pattern, text, re.IGNORECASE)
         idx = m0.start() if m0 else -1
-        span = text if idx == -1 else text[max(0, idx - 80) : idx + 200]
+        span = text if idx == -1 else text[max(0, idx - 120) : idx + 280]
 
+        # 1) Numeric date + time
         d = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", span)
         t = re.search(r"(\d{1,2}[:.]\d{2})\s*(?:hs|hs\.|h|hrs|hrs\.)?", span, re.IGNORECASE)
         if d and t:
@@ -99,7 +91,37 @@ def try_parse_draw_metadata(text: str) -> tuple[Optional[int], Optional[datetime
                     return datetime.strptime(f"{ds} {ts}", fmt)
                 except Exception:
                     continue
-        # Sometimes only time appears; attach today
+
+        # 2) Date only (numeric) — assume 00:00
+        if d and not t:
+            ds = d.group(1)
+            for fmt in ("%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y", "%d-%m-%y"):
+                try:
+                    base = datetime.strptime(ds, fmt)
+                    return base.replace(hour=0, minute=0)
+                except Exception:
+                    continue
+
+        # 3) Spanish textual date (e.g., 6 de septiembre de 2025) + optional time
+        month_map = {
+            "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+            "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
+            "noviembre": 11, "diciembre": 12,
+        }
+        mtxt = re.search(r"(\d{1,2})\s+de\s+([a-zA-Záéíóúñ]+)\s+de\s+(\d{4})", span, re.IGNORECASE)
+        if mtxt:
+            day = int(mtxt.group(1))
+            month_name = mtxt.group(2).lower()
+            month = month_map.get(month_name)
+            year = int(mtxt.group(3))
+            if month:
+                hhmm = re.search(r"(\d{1,2}[:.]\d{2})\s*(?:hs|hs\.|h|hrs|hrs\.)?", span, re.IGNORECASE)
+                if hhmm:
+                    hh, mm = hhmm.group(1).replace(".", ":").split(":")
+                    return datetime(year, month, day, int(hh), int(mm))
+                return datetime(year, month, day, 0, 0)
+
+        # 4) Time only — attach today
         if t and not d:
             try:
                 ts = t.group(1).replace(".", ":")
